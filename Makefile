@@ -40,6 +40,10 @@ constant_immutable_report: all
 	@echo ""
 	@echo "Experiment 1: constant expression values (C99 6.6)"
 	@$(call group_by,exp1)
+	@printf "  %-40s " "const int in case label:"
+	@echo 'const int N=10; int main(void){switch(0){case N:break;}return 0;}' \
+		| $(CC) $(CFLAGS) -x c -c - -o /dev/null 2>/dev/null \
+		&& echo "compiled (unexpected)" || echo "compile error (expected)"
 	@echo ""
 	@echo "Experiment 2: modify const local via cast (UB: C99 6.7.3.5)"
 	@$(call group_by,result)
