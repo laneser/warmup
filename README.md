@@ -7,13 +7,9 @@ contributed by < `laneser` >
 Verify that C99 `const` means **immutable** (cannot modify through its name),
 not **constant** (compile-time evaluable).
 
-### Experiments
-
-| # | Question | C99 Reference |
-|---|----------|---------------|
-| 1 | Is a `const` variable a constant expression? | §6.6 |
-| 2 | What happens when you cast away `const` and write? | §6.7.3.5 |
-| 3 | Does the compiler place `const` objects in read-only memory? | §6.7.3 fn.114 |
+All tests live in a single `constant_immutable.c`.  Compile-time tests are
+guarded by `#ifdef TEST_*` flags and driven by the Makefile; runtime experiments
+build and execute the default `main()`.
 
 ### Build & Run
 
@@ -29,14 +25,27 @@ Builds with all GCC optimization levels (`-O0`, `-Og`, `-O1`, `-Os`, `-O2`,
 ```
 constant vs immutable in C99 -- gcc 13
 
-Experiment 1: constant expression values (C99 6.6)
-  -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     define=256 enum=100 sizeof=4 const_var=10
+Compile-time: constant expression in case label (C99 6.6, 6.8.4.2)
+  -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     case_define: compiled
+  -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     case_enum: compiled
+  -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     case_sizeof: compiled
+  -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     case_cast_float: compiled
+  -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     case_char: compiled
+  -O0                                      case_const_int: compile error
+  -Og, -O1, -Os, -O2, -O3, -Ofast          case_const_int: compiled (gcc extension)
+  -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     arr[const_int]: VLA warning
 
-Experiment 2: modify const local via cast (UB: C99 6.7.3.5)
+Compile-time: mutability and addressability
+  -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     enum_assign: compile error (expected)
+  -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     enum_addr: compile error (expected)
+  -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     const_addr: compiled (expected)
+  -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     define_redefine: compiled (expected)
+
+Experiment 1: modify const local via cast (UB: C99 6.7.3.5)
   -O0                                      local_name=999 local_ptr=999
   -Og, -O1, -Os, -O2, -O3, -Ofast          local_name=100 local_ptr=999
 
-Experiment 3: memory permissions (C99 6.7.3, footnote 114)
+Experiment 2: memory permissions (C99 6.7.3, footnote 114)
   -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     g_const      perms=r--p writable=no
   -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     g_mutable    perms=rw-p writable=yes
   -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     local_const  perms=rw-p writable=yes
@@ -44,14 +53,20 @@ Experiment 3: memory permissions (C99 6.7.3, footnote 114)
 
 ### Findings
 
-- **Experiment 1**: `#define`, `enum`, `sizeof` are constant expressions;
-  `const int n` is not — `arr[n]` becomes a VLA, `case n:` is illegal.
-  Identical across all optimization levels.
-- **Experiment 2**: Modifying a `const` local via pointer cast is undefined
-  behavior (C99 §6.7.3.5). Under `-O0` the compiler reads from memory and
-  sees 999; from `-Og` onward, constant propagation replaces the read with
-  the original value 100.
-- **Experiment 3**: Global `const` is placed in a read-only page (`r--p`),
+- **Case labels**: `#define`, `enum`, `sizeof`, character constants, and float
+  casts are constant expressions (C99 §6.6) — accepted in `case` labels at all
+  optimization levels.  `const int` is **not** a constant expression; GCC
+  rejects it at `-O0` but accepts it at `-Og+` due to constant folding (a GCC
+  extension, not standard C99).
+- **VLA**: `int a[n]` with `const int n` is a VLA — confirmed by
+  `-Wvla -Werror=vla` triggering at all levels.
+- **Mutability**: `enum` constants cannot be assigned or addressed (no memory
+  location).  `const int` occupies memory and is addressable.  `#define` can be
+  redefined via `#undef`.
+- **Experiment 1**: Modifying a `const` local via pointer cast is undefined
+  behavior (C99 §6.7.3.5).  Under `-O0` the compiler reads from memory and
+  sees 999; from `-Og` onward, constant propagation replaces the read with the
+  original value 100.
+- **Experiment 2**: Global `const` is placed in a read-only page (`r--p`),
   while global mutable and stack variables are in read-write pages (`rw-p`).
-  This confirms C99 §6.7.3 footnote 114. Identical across all optimization
-  levels — memory layout is determined by the linker, not the optimizer.
+  This confirms C99 §6.7.3 footnote 114.
