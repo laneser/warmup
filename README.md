@@ -1,7 +1,5 @@
 # 2026q1 Homework1 (warmup)
 
-contributed by < `laneser` >
-
 ## constant vs immutable in C99
 
 Verify that C99 `const` means **immutable** (cannot modify through its name),
