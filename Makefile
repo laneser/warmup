@@ -4,7 +4,7 @@ LEVELS = O0 Og O1 Os O2 O3 Ofast
 
 TARGETS = $(addprefix ci_,$(LEVELS))
 
-.PHONY: all clean run constant_immutable_report
+.PHONY: all clean run constant_immutable_report func_designator_report
 
 all: $(TARGETS)
 
@@ -70,5 +70,13 @@ constant_immutable_report: all
 	@$(call for_each_level,$(call run_grep,exp2:g_mutable))
 	@$(call for_each_level,$(call run_grep,exp2:local_const))
 
+func_designator: func_designator.c
+	$(CC) $(CFLAGS) -o $@ $<
+
+func_designator_report: func_designator
+	@echo "Function designator conversion test -- $(CC) $$($(CC) -dumpversion)"
+	@echo ""
+	@./func_designator
+
 clean:
-	rm -f $(TARGETS)
+	rm -f $(TARGETS) func_designator
