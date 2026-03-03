@@ -68,3 +68,35 @@ Experiment 2: memory permissions (C99 6.7.3, footnote 114)
 - **Experiment 2**: Global `const` is placed in a read-only page (`r--p`),
   while global mutable and stack variables are in read-write pages (`rw-p`).
   This confirms C99 §6.7.3 footnote 114.
+
+## Function designator conversion test
+
+Verify that C99 §6.3.2.1¶4 causes function designators to auto-convert to
+function pointers, making `puts`, `*puts`, `&puts`, and `********puts` all
+yield the same address — while `&fp` (a function pointer variable) yields
+the variable's stack address.
+
+### Build & Run
+
+```
+make func_designator_report
+```
+
+### Sample Output
+
+```
+Function designator conversion test -- gcc 13
+
+puts        = 0x7e111696abe0
+*puts       = 0x7e111696abe0
+&puts       = 0x7e111696abe0
+********puts= 0x7e111696abe0
+
+fp          = 0x7e111696abe0
+*fp         = 0x7e111696abe0
+&fp         = 0x7fff51d55e10
+
+call: (********puts)("Hello")
+Hello
+return value: 6
+```
