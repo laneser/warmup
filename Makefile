@@ -4,7 +4,7 @@ LEVELS = O0 Og O1 Os O2 O3 Ofast
 
 TARGETS = $(addprefix ci_,$(LEVELS))
 
-.PHONY: all clean run constant_immutable_report func_designator_report
+.PHONY: all clean run constant_immutable_report func_designator_report opaque_report
 
 all: $(TARGETS)
 
@@ -40,7 +40,8 @@ endef
 run_grep = cur=$$(./ci_$$lvl | grep '^\[$(1)\]' | sed 's/^\[$(1)\] //')
 
 # Convenience: try compiling with -D flag; cur becomes one of two labels.
-compile_cmd = $(CC) $(CFLAGS) -$$lvl $(4) -D$(1) -c constant_immutable.c \
+# $(1)=flag $(2)=success label $(3)=fail label $(4)=extra flags $(5)=source file (default: constant_immutable.c)
+compile_cmd = $(CC) $(CFLAGS) -$$lvl $(4) -D$(1) -c $(if $(5),$(5),constant_immutable.c) \
 		-o /dev/null 2>/dev/null \
 		&& cur="$(2)" || cur="$(3)"
 
@@ -70,6 +71,27 @@ constant_immutable_report: all
 	@$(call for_each_level,$(call run_grep,exp2:g_mutable))
 	@$(call for_each_level,$(call run_grep,exp2:local_const))
 
+# Convenience: compile_cmd variant for opaque.c
+opaque_compile = $(CC) $(CFLAGS) -$$lvl -D$(1) -c opaque.c \
+		-o /dev/null 2>/dev/null \
+		&& cur="$(2)" || cur="$(3)"
+
+opaque_%: opaque.c
+	$(CC) $(CFLAGS) -$* -o $@ $<
+
+opaque_report: $(addprefix opaque_,$(LEVELS))
+	@echo "Incomplete type (opaque pointer) test -- $(CC) $$($(CC) -dumpversion)"
+	@echo ""
+	@echo "Compile-time: what works with incomplete type (C99 6.2.5)"
+	@$(call for_each_level,$(call opaque_compile,TEST_POINTER,struct opaque *p: compiled,struct opaque *p: compile error))
+	@$(call for_each_level,$(call opaque_compile,TEST_OBJECT,struct opaque x: compiled (unexpected),struct opaque x: compile error))
+	@$(call for_each_level,$(call opaque_compile,TEST_ARRAY,struct opaque a[3]: compiled (unexpected),struct opaque a[3]: compile error))
+	@$(call for_each_level,$(call opaque_compile,TEST_SIZEOF_STRUCT,sizeof(struct opaque): compiled (unexpected),sizeof(struct opaque): compile error))
+	@echo ""
+	@echo "Runtime: sizeof pointer to incomplete type"
+	@$(call for_each_level,cur=$$(./opaque_$$lvl))
+	@echo ""
+
 func_designator: func_designator.c
 	$(CC) $(CFLAGS) -o $@ $<
 
@@ -79,4 +101,4 @@ func_designator_report: func_designator
 	@./func_designator
 
 clean:
-	rm -f $(TARGETS) func_designator
+	rm -f $(TARGETS) $(addprefix opaque_,$(LEVELS)) func_designator
