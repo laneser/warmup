@@ -100,3 +100,30 @@ call: (********puts)("Hello")
 Hello
 return value: 6
 ```
+
+## Incomplete type (opaque pointer) test
+
+Verify that C99 §6.2.5 incomplete types can only be used through pointers:
+declaring objects, arrays, or using `sizeof` on an incomplete type are all
+compile errors.
+
+### Build & Run
+
+```
+make opaque_report
+```
+
+### Sample Output
+
+```
+Incomplete type (opaque pointer) test -- gcc 13
+
+Compile-time: what works with incomplete type (C99 6.2.5)
+  -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     struct opaque *p: compiled
+  -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     struct opaque x: compile error
+  -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     struct opaque a[3]: compile error
+  -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     sizeof(struct opaque): compile error
+
+Runtime: sizeof pointer to incomplete type
+  -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     sizeof(struct opaque *) = 8
+```
