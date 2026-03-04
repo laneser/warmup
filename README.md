@@ -127,3 +127,40 @@ Compile-time: what works with incomplete type (C99 6.2.5)
 Runtime: sizeof pointer to incomplete type
   -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     sizeof(struct opaque *) = 8
 ```
+
+## Object lifetime UB test (dangling pointer)
+
+Demonstrate that returning the address of an automatic variable is UB per
+C99 §6.2.4: the object's lifetime ends when the function returns, even though
+the storage may not yet be reused and the pointer still holds the original
+address.
+
+Two versions contrast compiler behavior:
+- `foo()` returns `&x` directly — GCC replaces with `return NULL` at all
+  optimization levels (exploiting UB).
+- `bar()` smuggles `&x` via an output parameter — at `-O0` the dangling
+  read "works" (`*p2 = 42`), but at `-O1+` the value is garbage because
+  the optimizer inlines `bar` and never writes `x` to the stack.
+
+### Build & Run
+
+```
+make lifetime_ub_report
+```
+
+### Sample Output
+
+```
+Object lifetime UB test -- gcc 13
+
+v1: foo() direct return (GCC replaces with NULL)
+  -O0, -Og, -O1, -Os, -O2, -O3, -Ofast     foo(42) returned: p1 = (nil)
+
+v2: bar() smuggled via output parameter
+  -O0, -Og                                   p2 = 0x..., *p2 = 42
+  -O1, -Os, -O2, -O3, -Ofast                 p2 = 0x..., *p2 = <garbage>
+
+v3: after second bar(99) — storage reuse
+  -O0, -Og                                   *p2 = 99  (storage reused)
+  -O1, -Os, -O2, -O3, -Ofast                 *p2 = <garbage>
+```
