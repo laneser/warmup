@@ -4,7 +4,7 @@ LEVELS = O0 Og O1 Os O2 O3 Ofast
 
 TARGETS = $(addprefix ci_,$(LEVELS))
 
-.PHONY: all clean run constant_immutable_report func_designator_report opaque_report
+.PHONY: all clean run constant_immutable_report func_designator_report opaque_report lifetime_ub_report
 
 all: $(TARGETS)
 
@@ -36,8 +36,9 @@ define for_each_level
 	printf "  %-40s %s\n" "$$group" "$$prev"
 endef
 
-# Convenience: grep runtime output of ci_$$lvl for a tagged line.
-run_grep = cur=$$(./ci_$$lvl | grep '^\[$(1)\]' | sed 's/^\[$(1)\] //')
+# Convenience: grep runtime output for a tagged line.
+# $(1)=tag $(2)=binary (default: ci_$$lvl)
+run_grep = cur=$$(./$(if $(2),$(2),ci_$$lvl) | grep '^\[$(1)\]' | sed 's/^\[$(1)\] //')
 
 # Convenience: try compiling with -D flag; cur becomes one of two labels.
 # $(1)=flag $(2)=success label $(3)=fail label $(4)=extra flags $(5)=source file (default: constant_immutable.c)
@@ -100,5 +101,22 @@ func_designator_report: func_designator
 	@echo ""
 	@./func_designator
 
+# lifetime_ub: demonstrate UB from accessing object past its lifetime
+lifetime_ub_%: lifetime_ub.c
+	$(CC) $(CFLAGS) -$* -o $@ $<
+
+lifetime_ub_report: $(addprefix lifetime_ub_,$(LEVELS))
+	@echo "Object lifetime UB test -- $(CC) $$($(CC) -dumpversion)"
+	@echo ""
+	@echo "v1: foo() direct return (GCC replaces with NULL)"
+	@$(call for_each_level,$(call run_grep,v1,lifetime_ub_$$lvl))
+	@echo ""
+	@echo "v2: bar() smuggled via output parameter"
+	@$(call for_each_level,$(call run_grep,v2,lifetime_ub_$$lvl))
+	@echo ""
+	@echo "v3: after second bar(99) — storage reuse"
+	@$(call for_each_level,$(call run_grep,v3,lifetime_ub_$$lvl))
+
 clean:
-	rm -f $(TARGETS) $(addprefix opaque_,$(LEVELS)) func_designator
+	rm -f $(TARGETS) $(addprefix opaque_,$(LEVELS)) func_designator \
+		$(addprefix lifetime_ub_,$(LEVELS))
