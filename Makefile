@@ -4,7 +4,7 @@ LEVELS = O0 Og O1 Os O2 O3 Ofast
 
 TARGETS = $(addprefix ci_,$(LEVELS))
 
-.PHONY: all clean run constant_immutable_report func_designator_report opaque_report lifetime_ub_report
+.PHONY: all clean run constant_immutable_report func_designator_report opaque_report lifetime_ub_report strict_alias_report
 
 all: $(TARGETS)
 
@@ -117,6 +117,26 @@ lifetime_ub_report: $(addprefix lifetime_ub_,$(LEVELS))
 	@echo "v3: after second bar(99) — storage reuse"
 	@$(call for_each_level,$(call run_grep,v3,lifetime_ub_$$lvl))
 
+# strict_alias: strict aliasing violation with float/int
+strict_alias_%: strict_alias.c
+	$(CC) $(CFLAGS) -$* -o $@ $<
+
+strict_alias_report: $(addprefix strict_alias_,$(LEVELS))
+	@echo "Strict aliasing test -- $(CC) $$($(CC) -dumpversion)"
+	@echo ""
+	@echo "v1: int* alias to float (strict aliasing violation)"
+	@$(call for_each_level,$(call run_grep,v1,strict_alias_$$lvl))
+	@echo ""
+	@echo "v2: memcpy version (well-defined)"
+	@$(call for_each_level,$(call run_grep,v2,strict_alias_$$lvl))
+	@echo ""
+	@echo "v3: unsigned char* version (always legal)"
+	@$(call for_each_level,$(call run_grep,v3,strict_alias_$$lvl))
+	@echo ""
+	@echo "v4: IEEE 754 bit pattern of 1.0f"
+	@$(call for_each_level,$(call run_grep,v4,strict_alias_$$lvl))
+
 clean:
 	rm -f $(TARGETS) $(addprefix opaque_,$(LEVELS)) func_designator \
-		$(addprefix lifetime_ub_,$(LEVELS))
+		$(addprefix lifetime_ub_,$(LEVELS)) \
+		$(addprefix strict_alias_,$(LEVELS))
