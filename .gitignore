@@ -5,3 +5,4 @@ lifetime_ub_Ofast
 strict_alias_O*
 strict_alias_Ofast
 func_designator
+array_param

@@ -4,7 +4,7 @@ LEVELS = O0 Og O1 Os O2 O3 Ofast
 
 TARGETS = $(addprefix ci_,$(LEVELS))
 
-.PHONY: all clean run constant_immutable_report func_designator_report opaque_report lifetime_ub_report strict_alias_report
+.PHONY: all clean run constant_immutable_report func_designator_report opaque_report lifetime_ub_report strict_alias_report array_param_report
 
 all: $(TARGETS)
 
@@ -136,7 +136,17 @@ strict_alias_report: $(addprefix strict_alias_,$(LEVELS))
 	@echo "v4: IEEE 754 bit pattern of 1.0f"
 	@$(call for_each_level,$(call run_grep,v4,strict_alias_$$lvl))
 
+# array_param: array parameter decay — f(int a[10]) vs g(int (*a)[10])
+array_param: array_param.c
+	$(CC) $(CFLAGS) -o $@ $<
+
+array_param_report: array_param
+	@echo "Array parameter decay test -- $(CC) $$($(CC) -dumpversion)"
+	@echo ""
+	@./array_param
+
 clean:
 	rm -f $(TARGETS) $(addprefix opaque_,$(LEVELS)) func_designator \
 		$(addprefix lifetime_ub_,$(LEVELS)) \
-		$(addprefix strict_alias_,$(LEVELS))
+		$(addprefix strict_alias_,$(LEVELS)) \
+		array_param
