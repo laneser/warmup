@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -std=c99 -Wall -Wextra
+CFLAGS = -std=gnu99 -Wall -Wextra
 
 UNITY_DIR = unity
 UNITY_SRC = $(UNITY_DIR)/unity.c
@@ -31,9 +31,27 @@ q1_report: test_q1 test_q1_bug
 	@echo "=== Q1 Original version (expected failures) ==="
 	@./test_q1_bug; true
 
-.PHONY: all clean q1_report
+# ---- Q2: 2020q1 quiz1 merge sort ----
 
-all: test_q1 test_q1_bug
+Q2_SRC = q2/merge_sort_original.c q2/merge_sort_improved.c q2/merge_sort_iterative.c
+
+test_q2: q2/test_merge_sort.c $(Q2_SRC) $(UNITY_SRC) | $(UNITY_DIR)/unity.h
+	$(CC) $(CFLAGS) -I$(UNITY_DIR) -Iq2 -o $@ $^
+
+test_q2_linux: q2/test_merge_sort_linux.c q2/merge_sort_linux.c $(UNITY_SRC) | $(UNITY_DIR)/unity.h
+	$(CC) $(CFLAGS) -I$(UNITY_DIR) -Iq2 -o $@ $^
+
+q2_report: test_q2 test_q2_linux
+	@echo ""
+	@echo "=== Q2 Merge sort singly-linked (Unity tests) ==="
+	@./test_q2
+	@echo ""
+	@echo "=== Q2 Merge sort list.h style (Unity tests) ==="
+	@./test_q2_linux
+
+.PHONY: all clean q1_report q2_report
+
+all: test_q1 test_q1_bug test_q2 test_q2_linux
 
 clean:
-	rm -f test_q1 test_q1_bug
+	rm -f test_q1 test_q1_bug test_q2 test_q2_linux
