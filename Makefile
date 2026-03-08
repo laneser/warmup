@@ -145,8 +145,47 @@ array_param_report: array_param
 	@echo ""
 	@./array_param
 
+# list_arr_bench: linked list vs array insert benchmark
+BENCH_MAX_N ?= 50000
+BENCH_TRIALS ?= 5
+BENCH_SIZES ?= 4 32 128 512
+BENCH_TITLE ?=
+
+# Helper: run Python via uv (preferred) or fallback to python3+pip
+define run_python
+	@if command -v uv >/dev/null 2>&1; then \
+		uv run $(1); \
+	else \
+		python3 -c "import matplotlib" 2>/dev/null || \
+			pip3 install --user matplotlib; \
+		python3 $(1); \
+	fi
+endef
+
+list_arr_bench: list_arr_bench.c
+	$(CC) $(CFLAGS) -O2 -o $@ $<
+
+bench_%.csv: list_arr_bench
+	./list_arr_bench $(BENCH_MAX_N) $(BENCH_TRIALS) $* > $@
+	@echo "Saved: $@ ($$(wc -l < $@) lines)"
+
+BENCH_CSVS = $(foreach s,$(BENCH_SIZES),bench_$(s).csv)
+
+bench_sizes.svg: $(BENCH_CSVS) plot_bench.py
+	$(call run_python,plot_bench.py . \
+		--sizes "$(subst $(eval) ,:,$(BENCH_CSVS))" \
+		$(if $(BENCH_TITLE),--title "$(BENCH_TITLE)"))
+
+list_arr_bench_report: $(BENCH_CSVS) bench_sizes.svg
+	@echo "Linked list vs Array insert benchmark -- $(CC) $$($(CC) -dumpversion)"
+	@echo "Element sizes: $(BENCH_SIZES) bytes"
+	@echo "CSVs: $(BENCH_CSVS)"
+	@echo "SVG:  bench_sizes.svg"
+	@echo ""
+	@for f in $(BENCH_CSVS); do echo "=== $$f ===" && cat $$f && echo ""; done
+
 clean:
 	rm -f $(TARGETS) $(addprefix opaque_,$(LEVELS)) func_designator \
 		$(addprefix lifetime_ub_,$(LEVELS)) \
 		$(addprefix strict_alias_,$(LEVELS)) \
-		array_param
+		array_param list_arr_bench bench_*.csv bench_combined.svg bench_sizes.svg

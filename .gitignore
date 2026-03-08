@@ -6,3 +6,6 @@ strict_alias_O*
 strict_alias_Ofast
 func_designator
 array_param
+list_arr_bench
+bench_*.csv
+bench_*.svg
