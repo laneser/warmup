@@ -9,3 +9,6 @@ array_param
 list_arr_bench
 bench_*.csv
 bench_*.svg
+quiz_linked_list/unity/
+quiz_linked_list/test_q1
+quiz_linked_list/test_q1_bug

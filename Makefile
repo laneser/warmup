@@ -4,7 +4,7 @@ LEVELS = O0 Og O1 Os O2 O3 Ofast
 
 TARGETS = $(addprefix ci_,$(LEVELS))
 
-.PHONY: all clean run constant_immutable_report func_designator_report opaque_report lifetime_ub_report strict_alias_report array_param_report
+.PHONY: all clean run constant_immutable_report func_designator_report opaque_report lifetime_ub_report strict_alias_report array_param_report quiz1_q1_report
 
 all: $(TARGETS)
 
@@ -145,6 +145,10 @@ array_param_report: array_param
 	@echo ""
 	@./array_param
 
+# quiz1_q1: delegated to quiz_linked_list/
+quiz1_q1_report:
+	$(MAKE) -C quiz_linked_list q1_report
+
 # list_arr_bench: linked list vs array insert benchmark
 BENCH_MAX_N ?= 50000
 BENCH_TRIALS ?= 5
@@ -188,4 +192,5 @@ clean:
 	rm -f $(TARGETS) $(addprefix opaque_,$(LEVELS)) func_designator \
 		$(addprefix lifetime_ub_,$(LEVELS)) \
 		$(addprefix strict_alias_,$(LEVELS)) \
-		array_param list_arr_bench bench_*.csv bench_combined.svg bench_sizes.svg
+		array_param \
+		list_arr_bench bench_*.csv bench_combined.svg bench_sizes.svg
