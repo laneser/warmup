@@ -1,14 +1,14 @@
 /*
- * test_quiz1_q1.c - Unity tests for the FIXED 2018q1 quiz4 Q1.
+ * test_quiz1_q1.c - Unity tests for the SUGGESTED 2018q1 quiz4 Q1.
  *
- * Binds fixed implementations to shared test functions and runs
+ * Binds suggested implementations to shared test functions and runs
  * them directly via Unity. All 10 tests should PASS.
  */
 
 #include "unity.h"
 #include "quiz1_q1_tests.h"
 
-/* Fixed implementations (defined in fix_quiz1_q1.c) */
+/* Suggested implementations (defined in fix_quiz1_q1.c) */
 extern void FuncB(struct node **start, int value);
 extern void FuncC(struct node **start, int value1, int value2);
 extern void bubble_sort(struct node **start, int length);

@@ -2,7 +2,7 @@
  * quiz1_q1.h - 2018q1 quiz4 Q1: doubly-linked circular list.
  *
  * Original quiz: https://hackmd.io/@sysprog/linked-list-quiz
- * Header-only so both buggy and fixed versions can be tested.
+ * Header-only so both original and suggested versions can be tested.
  */
 
 #ifndef QUIZ1_Q1_H
@@ -15,7 +15,7 @@ struct node {
     struct node *next, *prev;
 };
 
-/* ---- Helpers (shared by buggy and fixed) ---- */
+/* ---- Helpers (shared by original and suggested) ---- */
 
 static inline void free_list(struct node *start)
 {

@@ -25,10 +25,10 @@ test_q1_bug: q1/test_quiz1_q1_bug.c q1/quiz1_q1.c $(Q1_SHARED) $(UNITY_SRC) | $(
 
 q1_report: test_q1 test_q1_bug
 	@echo ""
-	@echo "=== Q1 Fixed version (Unity tests) ==="
+	@echo "=== Q1 Suggested version (Unity tests) ==="
 	@./test_q1
 	@echo ""
-	@echo "=== Q1 Buggy version (expected failures confirm bugs) ==="
+	@echo "=== Q1 Original version (expected failures) ==="
 	@./test_q1_bug; true
 
 .PHONY: all clean q1_report

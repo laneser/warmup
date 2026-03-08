@@ -1,7 +1,7 @@
 /*
- * fix_quiz1_q1.c - Fixed version of 2018q1 quiz4 Q1.
+ * fix_quiz1_q1.c - Suggested version of 2018q1 quiz4 Q1.
  *
- * Fixes:
+ * Improvements:
  *   1. FuncB: add NULL guard for empty list
  *   2. FuncC: add NULL guard + detect when value2 not found
  *   3. bubble_sort: swap data instead of relinking nodes

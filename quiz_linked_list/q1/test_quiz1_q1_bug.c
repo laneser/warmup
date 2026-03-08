@@ -1,9 +1,9 @@
 /*
- * test_quiz1_q1_bug.c - Run shared tests against BUGGY implementation.
+ * test_quiz1_q1_bug.c - Run shared tests against ORIGINAL implementation.
  *
  * Same 10 tests as test_quiz1_q1.c, but linked against quiz1_q1.c
- * (buggy). Each test runs in a fork() child to survive segfaults
- * and infinite loops. Expected: several FAILs confirming bugs.
+ * (original). Each test runs in a fork() child to survive segfaults
+ * and infinite loops. Expected: several FAILs confirming issues.
  */
 
 #include "unity.h"
@@ -14,7 +14,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-/* Buggy implementations (defined in quiz1_q1.c) */
+/* Original implementations (defined in quiz1_q1.c) */
 extern void FuncB(struct node **start, int value);
 extern void FuncC(struct node **start, int value1, int value2);
 extern void bubble_sort(struct node **start, int length);

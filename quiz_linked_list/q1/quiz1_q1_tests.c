@@ -3,7 +3,7 @@
  *
  * All test functions call through global function pointers (impl_FuncB,
  * impl_FuncC, impl_bubble_sort), so the same tests work for both the
- * buggy and fixed implementations.
+ * original and suggested implementations.
  */
 
 #include "unity.h"

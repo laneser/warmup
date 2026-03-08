@@ -1,10 +1,10 @@
 /*
- * quiz1_q1.c - 2018q1 quiz4 Q1: buggy doubly-linked circular list.
+ * quiz1_q1.c - 2018q1 quiz4 Q1: original doubly-linked circular list.
  *
  * Original quiz: https://hackmd.io/@sysprog/linked-list-quiz
  * Reference: https://github.com/LinYunWen/c-review/blob/master/week4/bubble_sort.c
  *
- * Bugs:
+ * Known issues:
  *   1. FuncB: dereferences NULL on empty list (no NULL guard)
  *   2. FuncC: dereferences NULL on empty list (no NULL guard)
  *   3. FuncC: infinite loop when value2 not found (circular list)

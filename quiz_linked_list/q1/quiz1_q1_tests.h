@@ -2,7 +2,7 @@
  * quiz1_q1_tests.h - Shared test declarations for 2018q1 quiz4 Q1.
  *
  * Test functions use global function pointers so the same tests
- * can run against both buggy and fixed implementations.
+ * can run against both original and suggested implementations.
  */
 
 #ifndef QUIZ1_Q1_TESTS_H
