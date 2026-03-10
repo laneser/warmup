@@ -232,12 +232,122 @@ def plot_multi_sizes(machine_datasets, outdir, title):
     print(f"Saved: {outpath}")
 
 
+def read_qsort_csv(path):
+    """Read quicksort per-trial CSV into lists of nanosecond values."""
+    data = {}
+    with open(path) as f:
+        reader = csv.DictReader(f)
+        for col in reader.fieldnames:
+            if col != "trial":
+                data[col] = []
+        for row in reader:
+            for col in data:
+                data[col].append(float(row[col]))
+    return data
+
+
+QSORT_COLORS = {
+    "original_ns": "#2980b9",    # blue
+    "tco_ns":      "#e74c3c",    # red
+    "method2_ns":  "#27ae60",    # green
+    "iterative_ns":"#e67e22",    # orange
+}
+
+QSORT_LABELS = {
+    "original_ns": "original (recursive)",
+    "tco_ns":      "linD026 tco",
+    "method2_ns":  "method2 (recurse smaller)",
+    "iterative_ns":"iterative (explicit stack)",
+}
+
+
+def _plot_qsort_ax(ax, data, opt_label, n_bins=100):
+    """Plot one quicksort subplot: bin-averaged per-trial time."""
+    import statistics
+
+    all_vals = []
+    for col in data:
+        all_vals.extend(data[col])
+    all_vals.sort()
+    ylim = all_vals[int(len(all_vals) * 0.95)] * 1.15
+
+    n_trials = len(next(iter(data.values())))
+    bin_size = max(1, n_trials // n_bins)
+    actual_bins = (n_trials + bin_size - 1) // bin_size
+
+    for col in data:
+        vals = data[col]
+        binned = []
+        for b in range(actual_bins):
+            chunk = vals[b * bin_size : (b + 1) * bin_size]
+            binned.append(statistics.mean(chunk))
+        xs = list(range(actual_bins))
+
+        import statistics as _st
+        color = QSORT_COLORS.get(col, "#333333")
+        label = QSORT_LABELS.get(col, col)
+        median = _st.median(vals)
+        label_with_median = f"{label} (med {median/1e6:.2f} ms)"
+        ax.plot(xs, binned, "-", color=color,
+                label=label_with_median, linewidth=1.2, alpha=0.85)
+
+    ax.set_xlabel(f"Bin (each = {bin_size} trials)", fontsize=10)
+    ax.set_ylabel("Time (ns)", fontsize=10)
+    ax.set_title(f"{opt_label} — {n_trials} trials", fontsize=11)
+    ax.set_ylim(0, ylim)
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=7, loc="upper right")
+
+
+def plot_qsort(csv_O0, csv_O3, outdir, title):
+    """Plot quicksort benchmark: two subplots (-O0 vs -O3), per-trial time."""
+    data_O0 = read_qsort_csv(csv_O0)
+    data_O3 = read_qsort_csv(csv_O3)
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    _plot_qsort_ax(axes[0], data_O0, "-O0 (no optimization)")
+    _plot_qsort_ax(axes[1], data_O3, "-O3")
+
+    fig.suptitle(f"Quicksort Variants — {title}", fontsize=14, y=1.02)
+    fig.tight_layout()
+    outpath = Path(outdir) / "qsort_bench.svg"
+    fig.savefig(outpath, format="svg", bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {outpath}")
+
+
+def plot_qsort_multi(machines, outdir, title):
+    """Plot quicksort benchmark across multiple machines.
+
+    machines: list of (label, csv_O0_path, csv_O3_path)
+    Layout: rows = machines, columns = -O0 / -O3.
+    """
+    n_machines = len(machines)
+    fig, axes = plt.subplots(n_machines, 2,
+                             figsize=(14, 4.2 * n_machines),
+                             squeeze=False)
+
+    for row, (label, csv_O0, csv_O3) in enumerate(machines):
+        data_O0 = read_qsort_csv(csv_O0)
+        data_O3 = read_qsort_csv(csv_O3)
+        _plot_qsort_ax(axes[row][0], data_O0, f"{label} — -O0")
+        _plot_qsort_ax(axes[row][1], data_O3, f"{label} — -O3")
+
+    fig.suptitle(f"Quicksort Variants — {title}", fontsize=14, y=1.01)
+    fig.tight_layout()
+    outpath = Path(outdir) / "qsort_bench.svg"
+    fig.savefig(outpath, format="svg", bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {outpath}")
+
+
 def parse_args(argv):
     """Parse command-line arguments."""
     title = None
     data_args = []
     sizes_arg = None
     multi_sizes_args = []
+    qsort_mode = False
     positional = []
     i = 1
     while i < len(argv):
@@ -257,14 +367,47 @@ def parse_args(argv):
             while i < len(argv) and not argv[i].startswith("--"):
                 multi_sizes_args.append(argv[i])
                 i += 1
+        elif argv[i] == "--qsort":
+            qsort_mode = True
+            i += 1
         else:
             positional.append(argv[i])
             i += 1
-    return positional, data_args, sizes_arg, multi_sizes_args, title
+    return positional, data_args, sizes_arg, multi_sizes_args, qsort_mode, title
 
 
 def main():
-    positional, data_args, sizes_arg, multi_sizes_args, title = parse_args(sys.argv)
+    positional, data_args, sizes_arg, multi_sizes_args, qsort_mode, title = parse_args(sys.argv)
+
+    if qsort_mode:
+        # Multi-machine: --qsort "label:O0.csv:O3.csv" ... <outdir>
+        # Single-machine: --qsort <O0.csv> <O3.csv> <outdir>
+        if len(positional) >= 2 and ":" in positional[0]:
+            # Multi-machine format
+            outdir = positional[-1]
+            Path(outdir).mkdir(parents=True, exist_ok=True)
+            machines = []
+            for arg in positional[:-1]:
+                parts = arg.split(":")
+                if len(parts) != 3:
+                    print(f"Error: expected 'label:O0.csv:O3.csv', got '{arg}'")
+                    sys.exit(1)
+                machines.append((parts[0], parts[1], parts[2]))
+            if title is None:
+                title = "n=10000, 1000 trials"
+            plot_qsort_multi(machines, outdir, title)
+        elif len(positional) >= 3:
+            csv_O0, csv_O3, outdir = positional[0], positional[1], positional[2]
+            Path(outdir).mkdir(parents=True, exist_ok=True)
+            if title is None:
+                title = f"n=10000 — {detect_cpu()}"
+            plot_qsort(csv_O0, csv_O3, outdir, title)
+        else:
+            print("Usage:")
+            print("  plot_bench.py --qsort <O0.csv> <O3.csv> <outdir>")
+            print('  plot_bench.py --qsort "L1:O0:O3" "L2:O0:O3" <outdir>')
+            sys.exit(1)
+        return
 
     if multi_sizes_args:
         # Multi-machine × multi-size: --multi-sizes "label:csv1,csv2,..." ...

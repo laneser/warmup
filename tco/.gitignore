@@ -1,0 +1,6 @@
+qsort_bench
+qsort_bench_O0
+qsort_bench_O3
+test_qsort
+*.o
+*.png
