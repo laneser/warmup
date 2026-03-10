@@ -57,13 +57,17 @@ static inline void list_sort_stats_record(unsigned long n_elements,
 HEADER_EOF
 echo "  Created lib/list_sort_stats.h"
 
-# 2. Create list_sort_stats.c
+# 2. Create list_sort_stats.c (histogram version)
 cat > "${KSRC}/lib/list_sort_stats.c" << 'STATS_EOF'
 // SPDX-License-Identifier: GPL-2.0
 /*
  * list_sort_stats.c - debugfs instrumentation for list_sort() input patterns
  *
  * Exposes /sys/kernel/debug/list_sort_stats/{stats,reset}
+ *
+ * Records a histogram of list sizes with per-bucket run statistics,
+ * plus per-caller breakdown using __builtin_return_address(1) to
+ * identify the actual caller of list_sort().
  */
 
 #include <linux/debugfs.h>
@@ -74,13 +78,31 @@ cat > "${KSRC}/lib/list_sort_stats.c" << 'STATS_EOF'
 #include <linux/kallsyms.h>
 #include "list_sort_stats.h"
 
+/* Histogram bucket boundaries: [0,10), [10,100), [100,1000), ... */
+#define NR_BUCKETS 7
+static const unsigned long bucket_bounds[NR_BUCKETS] = {
+	0, 10, 100, 1000, 5000, 10000, ULONG_MAX
+};
+
+struct bucket_stats {
+	atomic64_t calls;
+	atomic64_t elements;
+	atomic64_t runs;
+	atomic64_t already_sorted;
+};
+
+static struct bucket_stats buckets[NR_BUCKETS];
+
+/* Global aggregates */
 static atomic64_t stat_calls = ATOMIC64_INIT(0);
 static atomic64_t stat_elements = ATOMIC64_INIT(0);
 static atomic64_t stat_runs = ATOMIC64_INIT(0);
 static atomic64_t stat_asc_runs = ATOMIC64_INIT(0);
 static atomic64_t stat_desc_runs = ATOMIC64_INIT(0);
 static atomic64_t stat_already_sorted = ATOMIC64_INIT(0);
+static atomic64_t stat_max_elements = ATOMIC64_INIT(0);
 
+/* Per-caller tracking */
 #define MAX_CALLERS 32
 
 struct caller_entry {
@@ -88,18 +110,38 @@ struct caller_entry {
 	unsigned long count;
 	unsigned long total_elements;
 	unsigned long total_runs;
+	unsigned long max_elements;
 };
 
 static struct caller_entry callers[MAX_CALLERS];
 static int n_callers;
 static DEFINE_SPINLOCK(callers_lock);
 
+static int bucket_idx(unsigned long n)
+{
+	int i;
+
+	for (i = NR_BUCKETS - 1; i > 0; i--) {
+		if (n >= bucket_bounds[i])
+			return i;
+	}
+	return 0;
+}
+
 void list_sort_stats_record(unsigned long n_elements, unsigned long n_runs,
 			    unsigned long n_asc, unsigned long n_desc)
 {
-	unsigned long ret_addr = (unsigned long)__builtin_return_address(0);
+	/*
+	 * __builtin_return_address(1) gives us list_sort()'s caller
+	 * (e.g. an XFS function), since this function is called from
+	 * within list_sort().  Level 0 would just give list_sort itself.
+	 */
+	unsigned long ret_addr = (unsigned long)__builtin_return_address(1);
+	int idx = bucket_idx(n_elements);
+	s64 cur_max;
 	int i;
 
+	/* Global stats */
 	atomic64_inc(&stat_calls);
 	atomic64_add(n_elements, &stat_elements);
 	atomic64_add(n_runs, &stat_runs);
@@ -108,12 +150,27 @@ void list_sort_stats_record(unsigned long n_elements, unsigned long n_runs,
 	if (n_runs <= 1)
 		atomic64_inc(&stat_already_sorted);
 
+	/* Track max elements seen */
+	cur_max = atomic64_read(&stat_max_elements);
+	if ((s64)n_elements > cur_max)
+		atomic64_cmpxchg(&stat_max_elements, cur_max, n_elements);
+
+	/* Histogram bucket */
+	atomic64_inc(&buckets[idx].calls);
+	atomic64_add(n_elements, &buckets[idx].elements);
+	atomic64_add(n_runs, &buckets[idx].runs);
+	if (n_runs <= 1)
+		atomic64_inc(&buckets[idx].already_sorted);
+
+	/* Per-caller */
 	spin_lock(&callers_lock);
 	for (i = 0; i < n_callers; i++) {
 		if (callers[i].addr == ret_addr) {
 			callers[i].count++;
 			callers[i].total_elements += n_elements;
 			callers[i].total_runs += n_runs;
+			if (n_elements > callers[i].max_elements)
+				callers[i].max_elements = n_elements;
 			spin_unlock(&callers_lock);
 			return;
 		}
@@ -123,6 +180,7 @@ void list_sort_stats_record(unsigned long n_elements, unsigned long n_runs,
 		callers[n_callers].count = 1;
 		callers[n_callers].total_elements = n_elements;
 		callers[n_callers].total_runs = n_runs;
+		callers[n_callers].max_elements = n_elements;
 		n_callers++;
 	}
 	spin_unlock(&callers_lock);
@@ -142,18 +200,46 @@ static int stats_show(struct seq_file *m, void *v)
 	seq_printf(m, "total_desc_runs: %lld\n", atomic64_read(&stat_desc_runs));
 	seq_printf(m, "already_sorted:  %lld\n",
 		   atomic64_read(&stat_already_sorted));
+	seq_printf(m, "max_elements:    %lld\n",
+		   atomic64_read(&stat_max_elements));
 	if (calls > 0) {
 		seq_printf(m, "avg_elements:    %lld\n", elements / calls);
 		seq_printf(m, "avg_runs:        %lld\n", runs / calls);
-		/* ratio = runs/elements as percentage */
-		seq_printf(m, "avg_runs_ratio:  %lld.%02lld%%\n",
-			   runs * 100 / elements,
-			   (runs * 10000 / elements) % 100);
 	}
 
+	/* Histogram */
+	seq_puts(m, "\n--- histogram by list size ---\n");
+	seq_printf(m, "%-16s %10s %12s %10s %8s %12s\n",
+		   "range", "calls", "tot_elem", "tot_runs",
+		   "sorted%", "avg_elem");
+
+	for (i = 0; i < NR_BUCKETS; i++) {
+		s64 bc = atomic64_read(&buckets[i].calls);
+		s64 be = atomic64_read(&buckets[i].elements);
+		s64 br = atomic64_read(&buckets[i].runs);
+		s64 bs = atomic64_read(&buckets[i].already_sorted);
+		char range[32];
+
+		if (bc == 0)
+			continue;
+
+		if (i == NR_BUCKETS - 1)
+			snprintf(range, sizeof(range), "[%lu,+inf)",
+				 bucket_bounds[i]);
+		else
+			snprintf(range, sizeof(range), "[%lu,%lu)",
+				 bucket_bounds[i], bucket_bounds[i + 1]);
+
+		seq_printf(m, "%-16s %10lld %12lld %10lld %7lld%% %12lld\n",
+			   range, bc, be, br,
+			   bc > 0 ? bs * 100 / bc : 0,
+			   bc > 0 ? be / bc : 0);
+	}
+
+	/* Per-caller */
 	seq_puts(m, "\n--- per-caller breakdown ---\n");
-	seq_printf(m, "%-50s %8s %12s %10s %12s\n",
-		   "caller", "calls", "tot_elem", "tot_runs", "avg_run/elem");
+	seq_printf(m, "%-50s %8s %10s %10s %8s\n",
+		   "caller", "calls", "avg_elem", "avg_runs", "max_n");
 
 	spin_lock(&callers_lock);
 	for (i = 0; i < n_callers; i++) {
@@ -165,11 +251,9 @@ static int stats_show(struct seq_file *m, void *v)
 			avg_elem = callers[i].total_elements / callers[i].count;
 			avg_runs = callers[i].total_runs / callers[i].count;
 		}
-		seq_printf(m, "%-50s %8lu %12lu %10lu %7lu/%-5lu\n",
-			   sym, callers[i].count,
-			   callers[i].total_elements,
-			   callers[i].total_runs,
-			   avg_runs, avg_elem);
+		seq_printf(m, "%-50s %8lu %10lu %10lu %8lu\n",
+			   sym, callers[i].count, avg_elem, avg_runs,
+			   callers[i].max_elements);
 	}
 	spin_unlock(&callers_lock);
 
@@ -184,12 +268,22 @@ static int stats_open(struct inode *inode, struct file *file)
 static ssize_t reset_write(struct file *file, const char __user *buf,
 			    size_t count, loff_t *ppos)
 {
+	int i;
+
 	atomic64_set(&stat_calls, 0);
 	atomic64_set(&stat_elements, 0);
 	atomic64_set(&stat_runs, 0);
 	atomic64_set(&stat_asc_runs, 0);
 	atomic64_set(&stat_desc_runs, 0);
 	atomic64_set(&stat_already_sorted, 0);
+	atomic64_set(&stat_max_elements, 0);
+
+	for (i = 0; i < NR_BUCKETS; i++) {
+		atomic64_set(&buckets[i].calls, 0);
+		atomic64_set(&buckets[i].elements, 0);
+		atomic64_set(&buckets[i].runs, 0);
+		atomic64_set(&buckets[i].already_sorted, 0);
+	}
 
 	spin_lock(&callers_lock);
 	n_callers = 0;
