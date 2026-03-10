@@ -1,0 +1,317 @@
+From: laneser <laneser.kuo@gmail.com>
+Subject: [PATCH] lib/list_sort: add natural run instrumentation via debugfs
+
+Add lightweight instrumentation to list_sort() that counts natural runs
+in the input without changing the sorting algorithm.  This answers the
+question: how ordered are the lists that kernel callers pass to
+list_sort()?
+
+A "natural run" is a maximal ascending subsequence (cmp(a, b) <= 0).
+Fully random input has ~n/2 runs; fully sorted input has 1 run.
+The ratio runs/elements indicates how much a run-aware algorithm
+(e.g., natural merge sort or Timsort) could benefit.
+
+Data is exposed via /sys/kernel/debug/list_sort_stats with fields:
+  calls, total_elements, total_runs, total_asc_runs, total_desc_runs,
+  already_sorted (single-run inputs), caller distribution (top callers)
+
+Controlled by CONFIG_LIST_SORT_STATS (default n).  When disabled,
+the instrumentation compiles to nothing — zero overhead.
+
+Signed-off-by: laneser <laneser.kuo@gmail.com>
+---
+ lib/Kconfig.debug |  11 ++++
+ lib/Makefile      |   1 +
+ lib/list_sort.c   |  42 +++++++++++++
+ lib/list_sort_stats.c | 140 +++++++++++++++++++++++++++++++++++++++++
+ lib/list_sort_stats.h |  25 ++++++++
+ 5 files changed, 219 insertions(+)
+ create mode 100644 lib/list_sort_stats.c
+ create mode 100644 lib/list_sort_stats.h
+
+--- a/lib/Kconfig.debug
++++ b/lib/Kconfig.debug
+@@ -2,6 +2,17 @@
+
+ menu "Kernel hacking"
+
++config LIST_SORT_STATS
++	bool "Collect natural-run statistics for list_sort()"
++	depends on DEBUG_FS
++	default n
++	help
++	  When enabled, list_sort() scans its input before sorting to
++	  count the number of natural ascending and descending runs.
++	  Results are exposed via /sys/kernel/debug/list_sort_stats.
++
++	  This adds a small overhead per list_sort() call.  Say N
++	  unless you are researching list_sort() input patterns.
+
+ source "lib/Kconfig.ubsan"
+ source "lib/Kconfig.kcsan"
+--- a/lib/Makefile
++++ b/lib/Makefile
+@@ -47,6 +47,7 @@
+ obj-y += bcd.o sort.o parser.o debug_locks.o random32.o \
+ 	 list_sort.o uuid.o iov_iter.o clz_ctz.o \
+ 	 bsearch.o find_bit.o llist.o proto_csum.o \
++obj-$(CONFIG_LIST_SORT_STATS) += list_sort_stats.o
+
+ obj-$(CONFIG_STRING_SELFTEST) += test_string.o
+--- a/lib/list_sort.c
++++ b/lib/list_sort.c
+@@ -3,6 +3,10 @@
+ #include <linux/export.h>
+ #include <linux/list_sort.h>
+ #include <linux/list.h>
++#ifdef CONFIG_LIST_SORT_STATS
++#include "list_sort_stats.h"
++#include <linux/string.h>
++#endif
+
+ /*
+  * Returns a list organized in an intermediate format suited
+@@ -191,11 +195,49 @@
+ __attribute__((nonnull(2,3)))
+ void list_sort(void *priv, struct list_head *head, list_cmp_func_t cmp)
+ {
+ 	struct list_head *list = head->next, *pending = NULL;
+ 	size_t count = 0;	/* Count of pending */
++#ifdef CONFIG_LIST_SORT_STATS
++	size_t n_elements = 0;
++	size_t n_runs = 0;
++	size_t n_asc = 0, n_desc = 0;
++#endif
+
+ 	if (list == head->prev)	/* Zero or one elements */
+ 		return;
+
++#ifdef CONFIG_LIST_SORT_STATS
++	/*
++	 * Pre-scan: count natural runs without modifying the list.
++	 * A "run" is a maximal monotonic subsequence.
++	 * This traverses the list once via ->next pointers (which
++	 * are still intact at this point).
++	 */
++	{
++		struct list_head *scan = head->next;
++		int in_desc = 0;
++
++		n_elements = 1;
++		n_runs = 1;
++		while (scan->next != head) {
++			int c = cmp(priv, scan, scan->next);
++
++			n_elements++;
++			if (in_desc) {
++				if (c <= 0) {
++					n_runs++;
++					in_desc = 0;
++				}
++			} else {
++				if (c > 0) {
++					n_runs++;
++					in_desc = 1;
++				}
++			}
++			scan = scan->next;
++		}
++		n_asc = (n_runs + 1) / 2;
++		n_desc = n_runs / 2;
++		list_sort_stats_record(n_elements, n_runs, n_asc, n_desc);
++	}
++#endif
++
+ 	/* Convert to a null-terminated singly-linked list. */
+ 	head->prev->next = NULL;
+
+--- /dev/null
++++ b/lib/list_sort_stats.h
+@@ -0,0 +1,25 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _LIB_LIST_SORT_STATS_H
++#define _LIB_LIST_SORT_STATS_H
++
++#ifdef CONFIG_LIST_SORT_STATS
++
++void list_sort_stats_record(unsigned long n_elements, unsigned long n_runs,
++			    unsigned long n_asc, unsigned long n_desc);
++int __init list_sort_stats_init(void);
++
++#else
++
++static inline void list_sort_stats_record(unsigned long n_elements,
++					  unsigned long n_runs,
++					  unsigned long n_asc,
++					  unsigned long n_desc)
++{
++}
++
++#endif /* CONFIG_LIST_SORT_STATS */
++#endif /* _LIB_LIST_SORT_STATS_H */
+--- /dev/null
++++ b/lib/list_sort_stats.c
+@@ -0,0 +1,140 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * list_sort_stats.c - debugfs instrumentation for list_sort() input patterns
++ *
++ * Exposes /sys/kernel/debug/list_sort_stats with:
++ *   - Aggregate counts: calls, elements, runs
++ *   - Per-caller tracking (top 32 callers by return address)
++ *   - Reset interface
++ */
++
++#include <linux/debugfs.h>
++#include <linux/atomic.h>
++#include <linux/module.h>
++#include <linux/spinlock.h>
++#include <linux/seq_file.h>
++#include <linux/kallsyms.h>
++#include "list_sort_stats.h"
++
++/* Aggregate counters */
++static atomic64_t stat_calls = ATOMIC64_INIT(0);
++static atomic64_t stat_elements = ATOMIC64_INIT(0);
++static atomic64_t stat_runs = ATOMIC64_INIT(0);
++static atomic64_t stat_asc_runs = ATOMIC64_INIT(0);
++static atomic64_t stat_desc_runs = ATOMIC64_INIT(0);
++static atomic64_t stat_already_sorted = ATOMIC64_INIT(0);
++
++/* Per-caller tracking */
++#define MAX_CALLERS 32
++
++struct caller_entry {
++	unsigned long addr;
++	unsigned long count;
++	unsigned long total_elements;
++	unsigned long total_runs;
++};
++
++static struct caller_entry callers[MAX_CALLERS];
++static int n_callers;
++static DEFINE_SPINLOCK(callers_lock);
++
++void list_sort_stats_record(unsigned long n_elements, unsigned long n_runs,
++			    unsigned long n_asc, unsigned long n_desc)
++{
++	unsigned long ret_addr = (unsigned long)__builtin_return_address(0);
++	int i;
++
++	atomic64_inc(&stat_calls);
++	atomic64_add(n_elements, &stat_elements);
++	atomic64_add(n_runs, &stat_runs);
++	atomic64_add(n_asc, &stat_asc_runs);
++	atomic64_add(n_desc, &stat_desc_runs);
++	if (n_runs <= 1)
++		atomic64_inc(&stat_already_sorted);
++
++	/* Track per-caller stats */
++	spin_lock(&callers_lock);
++	for (i = 0; i < n_callers; i++) {
++		if (callers[i].addr == ret_addr) {
++			callers[i].count++;
++			callers[i].total_elements += n_elements;
++			callers[i].total_runs += n_runs;
++			spin_unlock(&callers_lock);
++			return;
++		}
++	}
++	if (n_callers < MAX_CALLERS) {
++		callers[n_callers].addr = ret_addr;
++		callers[n_callers].count = 1;
++		callers[n_callers].total_elements = n_elements;
++		callers[n_callers].total_runs = n_runs;
++		n_callers++;
++	}
++	spin_unlock(&callers_lock);
++}
++
++static int stats_show(struct seq_file *m, void *v)
++{
++	s64 calls = atomic64_read(&stat_calls);
++	s64 elements = atomic64_read(&stat_elements);
++	s64 runs = atomic64_read(&stat_runs);
++	int i;
++
++	seq_printf(m, "calls:           %lld\n", calls);
++	seq_printf(m, "total_elements:  %lld\n", elements);
++	seq_printf(m, "total_runs:      %lld\n", runs);
++	seq_printf(m, "total_asc_runs:  %lld\n", atomic64_read(&stat_asc_runs));
++	seq_printf(m, "total_desc_runs: %lld\n", atomic64_read(&stat_desc_runs));
++	seq_printf(m, "already_sorted:  %lld\n",
++		   atomic64_read(&stat_already_sorted));
++	if (calls > 0) {
++		seq_printf(m, "avg_elements:    %lld\n", elements / calls);
++		seq_printf(m, "avg_runs:        %lld\n", runs / calls);
++		seq_printf(m, "avg_runs_ratio:  %lld.%02lld%%\n",
++			   runs * 100 / elements,
++			   (runs * 10000 / elements) % 100);
++	}
++
++	seq_puts(m, "\n--- per-caller breakdown ---\n");
++	seq_printf(m, "%-40s %8s %12s %10s %8s\n",
++		   "caller", "calls", "elements", "runs", "ratio");
++
++	spin_lock(&callers_lock);
++	for (i = 0; i < n_callers; i++) {
++		char sym[KSYM_SYMBOL_LEN];
++		unsigned long avg_elem, avg_runs;
++
++		sprint_symbol(sym, callers[i].addr);
++		avg_elem = callers[i].total_elements / callers[i].count;
++		avg_runs = callers[i].total_runs / callers[i].count;
++		seq_printf(m, "%-40s %8lu %12lu %10lu %5lu/%lu\n",
++			   sym, callers[i].count,
++			   callers[i].total_elements,
++			   callers[i].total_runs,
++			   avg_runs, avg_elem);
++	}
++	spin_unlock(&callers_lock);
++
++	return 0;
++}
++
++static int stats_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, stats_show, NULL);
++}
++
++static ssize_t reset_write(struct file *file, const char __user *buf,
++			    size_t count, loff_t *ppos)
++{
++	atomic64_set(&stat_calls, 0);
++	atomic64_set(&stat_elements, 0);
++	atomic64_set(&stat_runs, 0);
++	atomic64_set(&stat_asc_runs, 0);
++	atomic64_set(&stat_desc_runs, 0);
++	atomic64_set(&stat_already_sorted, 0);
++
++	spin_lock(&callers_lock);
++	n_callers = 0;
++	spin_unlock(&callers_lock);
++
++	return count;
++}
++
++static const struct file_operations stats_fops = {
++	.open = stats_open,
++	.read = seq_read,
++	.llseek = seq_lseek,
++	.release = single_release,
++};
++
++static const struct file_operations reset_fops = {
++	.write = reset_write,
++};
++
++static int __init list_sort_stats_init(void)
++{
++	struct dentry *dir;
++
++	dir = debugfs_create_dir("list_sort_stats", NULL);
++	debugfs_create_file("stats", 0444, dir, NULL, &stats_fops);
++	debugfs_create_file("reset", 0200, dir, NULL, &reset_fops);
++	return 0;
++}
++late_initcall(list_sort_stats_init);
